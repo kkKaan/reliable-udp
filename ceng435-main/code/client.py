@@ -3,11 +3,9 @@ import time
 
 from src import *
 
-TARGET_HOST = "172.17.0.2"
-UDP_TARGET_PORT = 20001
-TCP_TARGET_PORT = 65432
-UDP_SENDER_PORT = 20001
-TCP_SENDER_PORT = 65432
+TARGET_HOST_IP = "172.17.0.2"
+UDP_TARGET_PORT, UDP_SENDER_PORT = 20001, 20001
+TCP_TARGET_PORT, TCP_SENDER_PORT = 65432, 65432
 
 # Splits a file into chunks, yields the chunks respectively.
 def chunk_file(filename, chunk_size):
@@ -51,7 +49,7 @@ def send_tcp(filename, sender_port, target_host, target_port):
 
 if __name__ == '__main__':
     time.sleep(1)  # Wait for RDTOverUDPServer to start
-    send_rdt_over_udp('small-0.obj', UDP_SENDER_PORT, TARGET_HOST, UDP_TARGET_PORT)
+    send_rdt_over_udp('small-0.obj', UDP_SENDER_PORT, TARGET_HOST_IP, UDP_TARGET_PORT)
 
     time.sleep(1)  # Wait for TCPServer to start
-    # send_tcp('transfer_file_TCP.txt', TCP_SENDER_PORT, TARGET_HOST, TCP_TARGET_PORT)
+    # send_tcp('transfer_file_TCP.txt', TCP_SENDER_PORT, TARGET_HOST_IP, TCP_TARGET_PORT)
