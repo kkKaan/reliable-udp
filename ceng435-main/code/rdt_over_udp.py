@@ -72,104 +72,145 @@ def unpack_ack_package(data):
     except:
         return None
 
+# The PackageData class encapsulates the information about each data packet used in the RDT protocol.
 class PackageData:
-    seq_no = None
-    chunk = None
-    state = None
-    timestamp_sent = None
-    timestamp_received = None
-
+    # Constructor for initializing a PackageData. 
     def __init__(self, seq_no, chunk=None):
-        self.seq_no = seq_no % 10000
+        """
+        :param seq_no: The sequence number of the packet. It's used to uniquely identify and order packets in the protocol.
+        :param chunk: The actual data that the packet is carrying. This can be any serializable data.
+        """
+        self.seq_no = seq_no % 10000  # Reset sequence number every 10000 packets to avoid overflow
         self.chunk = chunk
-        self.state = STATE_WAITING
+        self.state = STATE_WAITING  # Initial state is 'waiting' indicating the packet is yet to be processed
 
+    # Marks the packet as sent by setting its state and recording the timestamp when it was sent.
     def mark_as_sent(self):
-        self.timestamp_sent = utils.get_timestamp()
-        self.state = STATE_SENT
+        self.timestamp_sent = utils.get_timestamp()  # Record the time of sending
+        self.state = STATE_SENT  # Update the state to 'sent'
 
+    # Marks the packet as acknowledged (ACKed) by changing its state.
     def mark_as_acked(self):
-        self.state = STATE_ACKED
+        self.state = STATE_ACKED  # Update the state to 'acknowledged'
 
+    # Marks the packet as received by setting its state and updating the timestamps.
     def mark_as_received(self, timestamp_sent, chunk):
+        """
+        :param timestamp_sent: The timestamp when the packet was originally sent.
+        :param chunk: The chunk of data received.
+        """
         self.chunk = chunk
-        self.timestamp_sent = timestamp_sent # This data comes from the client-side
-        self.timestamp_received = utils.get_timestamp()
-        self.state = STATE_RECEIVED
+        self.timestamp_sent = timestamp_sent  # Record the original sending time
+        self.timestamp_received = utils.get_timestamp()  # Record the time of reception
+        self.state = STATE_RECEIVED  # Update the state to 'received'
 
+    ### may be deleted ### 
+    # String representation of the PackageData object, typically used for logging and debugging.
     def __str__(self):
-        return f'{self.seq} - {self.state}'
+        return f'Seq No: {self.seq_no}, State: {self.state}'
 
+    # Official string representation of the PackageData object. 
     def __repr__(self):
         return self.__str__()
+    ######################
+
 
 class RDTOverUDPServer:
+    # Initialize the RDT server with a host IP and port number.
     def __init__(self, listen_host_ip, listen_port_no):
+        """
+        :param listen_host_ip: IP address on which the server listens.
+        :param listen_port_no: Port number on which the server listens.
+        """
         self.listen_host = listen_host_ip
         self.listen_port = listen_port_no
 
+        # Window for storing package data
         self.window = deque()
 
+        # Flag to indicate if the transmission has finished
         self.has_finished = False
 
-        for i in range(WINDOW_SIZE): # Creates the first window
+        # Initialize the window with PackageData instances
+        for i in range(WINDOW_SIZE):
             package_data = PackageData(i)
             self.window.append(package_data)
 
-    def send_ack(self, address, seq):
-        packed = pack_ack_package(seq)
-        self.socket.sendto(packed, address)
+    # Send an acknowledgment (ACK) for a received packet.
+    def send_ack(self, address, seq_no):
+        """
+        :param address: Address to which the ACK is sent.
+        :param seq_no: Sequence number of the packet being acknowledged.
+        """
+        packed = pack_ack_package(seq_no)  # Pack the ACK packet
+        self.socket.sendto(packed, address)  # Send the ACK packet
 
-    def mark_package_data_as_received_by_seq(self, seq, timestamp, chunk):
+    # Mark the packet as received based on its sequence number.
+    def mark_package_data_as_received_by_seq(self, seq_no, timestamp, chunk):
+        """
+        :param seq_no: Sequence number of the received packet.
+        :param timestamp: Timestamp when the packet was sent.
+        :param chunk: The data chunk of the packet.
+        """
         for package_data in self.window:
-            if package_data.seq == seq and package_data.state == STATE_WAITING:
+            if package_data.seq_no == seq_no and package_data.state == STATE_WAITING:
                 package_data.mark_as_received(timestamp, chunk)
                 break
 
+    # The main processing loop of the server.
     def process(self):
+        # Create and configure the server socket
         self.socket = create_socket(self.listen_host, self.listen_port)
-        self.socket.settimeout(20.0)
+        self.socket.settimeout(20.0)  # Set a timeout for the socket operations
 
         while len(self.window) > 0:
             try:
+                # Receive a packet from the socket
                 packed, address = self.socket.recvfrom(constants.PACKAGE_SIZE)
             except socket.timeout:
-                break
+                break  # Break the loop if a timeout occurs
 
-            if packed is not None and len(packed) == constants.PACKAGE_SIZE:
-                result = unpack_send_package(packed) # Unpack the package
+            if packed and len(packed) == constants.PACKAGE_SIZE:
+                result = unpack_send_package(packed)  # Unpack the received package
 
-                if result is not None:
-                    seq, timestamp, chunk = result
+                if result:
+                    seq_no, timestamp, chunk = result
 
+                    # Check if it's the last packet (indicated by a zero-length chunk)
                     if chunk is not None and len(chunk) == 0:
+                        # Send multiple ACKs for the last packet
                         for _ in range(5):
-                            self.send_ack(address, seq) # Send an ACK message
+                            self.send_ack(address, seq_no)
 
-                        while len(self.window) > 0 and self.window[-1].seq != seq:
+                        # Clear remaining packages as the transmission has ended
+                        while len(self.window) > 0 and self.window[-1].seq_no != seq_no:
                             self.window.pop()
 
-                        self.window.pop() # Remove the last package itself.
-
+                        self.window.pop()
                         self.has_finished = True
                     elif chunk:
-                        self.send_ack(address, seq) # Send an ack message
+                        # Send ACK for the received packet
+                        self.send_ack(address, seq_no)
 
-                        self.mark_package_data_as_received_by_seq(seq, timestamp, chunk)
+                        # Mark the packet as received
+                        self.mark_package_data_as_received_by_seq(seq_no, timestamp, chunk)
 
+                        # Process and remove received packets from the window
                         while len(self.window) > 0:
                             if self.window[0].state != STATE_RECEIVED:
                                 break
 
                             yield self.window[0]
 
-                            new_sequential_number = self.window[-1].seq + 1
+                            new_sequential_number = self.window[-1].seq_no + 1
+                            self.window.popleft()
 
-                            self.window.popleft() # Remove the received package
-
+                            # Add new package data if more packets are expected
                             if not self.has_finished:
                                 new_package_data = PackageData(new_sequential_number)
                                 self.window.append(new_package_data)
+
+        # Close the socket at the end
         self.socket.close()
 
 class RDTOverUDPClient:
@@ -184,23 +225,20 @@ class RDTOverUDPClient:
         self.fill_window() # The function that fills the sender window
 
     def next_seq(self):
-        if len(self.window) > 0: return self.window[-1].seq + 1
+        if len(self.window) > 0: return self.window[-1].seq_no + 1
         return 0
 
     def fill_window(self):
         while len(self.window) < WINDOW_SIZE:
             try:
                 chunk = next(self.data) # Fetch the next chunk from the generator
-
                 package_data = PackageData(self.next_seq(), chunk)
-
                 self.window.append(package_data)
             except StopIteration: # The generator raises an error in the end
                 break
 
     def send_package_data(self, package_data):
-        packed = pack_send_package(package_data.seq, package_data.chunk)
-
+        packed = pack_send_package(package_data.seq_no, package_data.chunk)
         self.socket.sendto(packed, self.target)
 
         # If the sent package data has already been sent, then
@@ -211,11 +249,10 @@ class RDTOverUDPClient:
         # Mark the package_data as sent and update the `timestamp_sent` timestamp.
         package_data.mark_as_sent()
 
-    def mark_package_data_acked_by_seq(self, seq):
+    def mark_package_data_acked_by_seq(self, seq_no):
         for package_data in self.window:
-            if package_data.seq == seq:
+            if package_data.seq_no == seq_no:
                 package_data.mark_as_acked()
-
                 break
 
     def process(self):
@@ -230,7 +267,6 @@ class RDTOverUDPClient:
             for package_data in self.window:
                 if package_data.state == STATE_WAITING:
                     self.send_package_data(package_data)
-
                     break
 
             self.wait()
