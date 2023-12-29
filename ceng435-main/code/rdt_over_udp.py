@@ -19,22 +19,17 @@ def create_socket(host_ip, port_number):
 
 def pack_send_package(seq_no, chunk):
     timestamp = utils.get_timestamp()
-
     chunk_length = len(chunk)
-    checksum = utils.get_checksum(bytes(str(seq_no), 'utf8') + bytes(str(timestamp), 'utf8') + \
-            bytes(str(chunk_length), 'utf8') + chunk)
-
+    checksum = utils.get_checksum(bytes(str(seq_no), 'utf8') + bytes(str(timestamp), 'utf8') + bytes(str(chunk_length), 'utf8') + chunk)
     align_size = constants.RDT_OVER_UDP_FILE_READ_SIZE - chunk_length
-
-    return struct.pack(f'!Id16sI{chunk_length}s{align_size}s', seq_no, timestamp, \
-                            checksum, chunk_length, chunk, b' ' * align_size)
+    return struct.pack(f'!Id16sI{chunk_length}s{align_size}s', seq_no, timestamp, checksum, chunk_length, chunk, b' ' * align_size)
 
 def unpack_send_package(data):
     try:
         # Unpack the header to get sequence number, timestamp, checksum, and chunk length
         header_format = '!Id16sI'  # format: sequence number, timestamp, checksum, chunk length
         header_size = constants.RDT_OVER_UDP_SEND_HEADER_SIZE
-        seq, timestamp, checksum, chunk_length = struct.unpack(header_format, data[:header_size])
+        seq_no, timestamp, checksum, chunk_length = struct.unpack(header_format, data[:header_size])
 
         # Calculate alignment size
         align_size = constants.RDT_OVER_UDP_FILE_READ_SIZE - chunk_length
@@ -44,12 +39,10 @@ def unpack_send_package(data):
         chunk, _ = struct.unpack(chunk_format, data[header_size:])
 
         # Verify checksum
-        checksum_data = bytes(str(seq), 'utf8') + bytes(str(timestamp), 'utf8') + \
-                        bytes(str(chunk_length), 'utf8') + chunk
+        checksum_data = bytes(str(seq_no), 'utf8') + bytes(str(timestamp), 'utf8') + bytes(str(chunk_length), 'utf8') + chunk
         if not utils.check_checksum(checksum, checksum_data):
-            return seq, timestamp, None  # Invalid checksum, return None for chunk
-
-        return seq, timestamp, chunk
+            return seq_no, timestamp, None  # Invalid checksum, return None for chunk
+        return seq_no, timestamp, chunk
 
     except struct.error:
         # Handle unpacking error (e.g., corrupted data)
@@ -59,18 +52,17 @@ def unpack_send_package(data):
         print(f"Error unpacking package: {e}")
         return None
 
-
 def pack_ack_package(seq):
     timestamp = utils.get_timestamp()
-    return struct.pack('!Id', seq, timestamp)
+    return struct.pack('!Id', seq_no, timestamp)
 
+# Tries unpacking the data.
 def unpack_ack_package(data):
     try:
         return struct.unpack('!Id', data)
-    except KeyboardInterrupt as e: # These line is required to stop the code in case of a KeyboardInterrupt.
-        raise e
     except:
         return None
+
 
 # The PackageData class encapsulates the information about each data packet used in the RDT protocol.
 class PackageData:
@@ -213,118 +205,108 @@ class RDTOverUDPServer:
         # Close the socket at the end
         self.socket.close()
 
+
 class RDTOverUDPClient:
     def __init__(self, sender_port, target_host, target_port, data):
+        """
+        :param sender_port: Port for the client to use for sending data.
+        :param target_host: Host address of the target server.
+        :param target_port: Port number of the target server.
+        :param data: A generator that yields data chunks to be sent.
+        """
         self.sender_port = sender_port
         self.target = (target_host, target_port)
-
         self.data = data
         self.retransmission_count = 0
+        
+        # Initialize the sender window
+        self.window = deque()
+        self.populate_window()
 
-        self.window = deque() # The sender window
-        self.fill_window() # The function that fills the sender window
-
-    def next_seq(self):
-        if len(self.window) > 0: return self.window[-1].seq_no + 1
-        return 0
-
-    def fill_window(self):
+    # Fills the sender window with package data up to the window size.
+    def populate_window(self):
         while len(self.window) < WINDOW_SIZE:
             try:
-                chunk = next(self.data) # Fetch the next chunk from the generator
-                package_data = PackageData(self.next_seq(), chunk)
-                self.window.append(package_data)
-            except StopIteration: # The generator raises an error in the end
+                chunk = next(self.data_generator)
+                seq_no = self.next_seq_no()
+                self.window.append(PackageData(seq_no, chunk))
+            except StopIteration:
                 break
 
-    def send_package_data(self, package_data):
-        packed = pack_send_package(package_data.seq_no, package_data.chunk)
-        self.socket.sendto(packed, self.target)
+    # Generates the next sequence number, and returns it.
+    def next_seq_no(self):
+        return self.window[-1].seq_no + 1 if self.window else 0
 
-        # If the sent package data has already been sent, then
-        # increase the retransmission count by one.
-        if package_data.state == STATE_SENT:
+    # Sends a packet to the target server.
+    def send_packet(self, packet):
+        """
+        :param packet: The package data to be sent.
+        """
+        packed_data = pack_send_package(packet.seq_no, packet.chunk)
+        self.socket.sendto(packed_data, self.target)
+        self.update_packet_state_on_send(packet)
+
+    # Updates the state of a packet after sending it.
+    def update_packet_state_on_send(self, packet):
+        """
+        :param packet: The package data that was sent.
+        """
+        if packet.state == STATE_SENT:
             self.retransmission_count += 1
+        packet.mark_as_sent()
 
-        # Mark the package_data as sent and update the `timestamp_sent` timestamp.
-        package_data.mark_as_sent()
-
-    def mark_package_data_acked_by_seq(self, seq_no):
-        for package_data in self.window:
-            if package_data.seq_no == seq_no:
-                package_data.mark_as_acked()
+    # Marks a packet as acknowledged based on its sequence number.
+    def ack_packet(self, seq_no):
+        """
+        :param seq_no: Sequence number of the packet that was acknowledged.
+        """
+        for packet in self.window:
+            if packet.seq_no == seq_no:
+                packet.mark_as_acked()
                 break
 
+    # Handles incoming ACK packets from the server.
+    def handle_incoming_ack_packets(self):
+        while self.has_unacknowledged_packets():
+            try:
+                packed_data, _ = self.socket.recvfrom(constants.RDT_OVER_UDP_ACK_PACKAGE_SIZE)
+                if packed_data:
+                    ack_result = unpack_ack_package(packed_data)
+                    if ack_result:
+                        seq_no, _ = ack_result
+                        self.ack_packet(seq_no)
+            except socket.timeout:
+                self.resend_timed_out_packets()
+
+    # Determines if there are packets that have been sent but not yet acknowledged, returns true if there are such packets.
+    def has_unacknowledged_packets(self):
+        return any(packet.state == STATE_SENT for packet in self.window)
+
+    # Resends packets that have not been acknowledged within the timeout period.
+    def resend_timed_out_packets(self):
+        current_time = utils.get_timestamp()
+        threshold_time = current_time - constants.RETRANSMISSION_TIMEOUT
+        for packet in self.window:
+            if packet.state == STATE_SENT and packet.timestamp_sent < threshold_time:
+                self.send_packet(packet)
+
+    # Main method to process the sending of data packets.
     def process(self):
-        self.socket = create_socket('', self.sender_port) # Create a UDP socket
-        # Set the timeout of the socket with RETRANSMISSION_TIMEOUT timeout
+        self.socket = create_socket('', self.sender_port)
         self.socket.settimeout(constants.RETRANSMISSION_TIMEOUT)
 
-        # If the window size not zero, i.e. there are still package_data's must be
-        # sent, send every package that in waiting state (not sent before) and wait
-        # for incoming packages.
-        while len(self.window) > 0:
-            for package_data in self.window:
-                if package_data.state == STATE_WAITING:
-                    self.send_package_data(package_data)
-                    break
+        while self.window:
+            if self.window[0].state == STATE_WAITING:
+                self.send_packet(self.window[0])
 
-            self.wait()
+            self.handle_incoming_ack_packets()
+            self.remove_acknowledged_packets()
+            self.populate_window()
 
-        # Since the window size is zero, there are no package_data's must be send,
-        # and all package_data's sent are ACK-ed by the server, the socket can be closed.
         self.socket.close()
-
-        # Return the retransmission count
         return self.retransmission_count
 
-    def must_wait(self):
-        for package_data in self.window:
-            if package_data.state == STATE_SENT:
-                return True
-
-        return False
-
-    def wait(self):
-        while self.must_wait(): # If the code must wait.
-            try:
-                # RDT_OVER_UDP_ACK_PACKAGE_SIZE is the size of the ACK package which is
-                # defined in constants.py.
-                packed, _ = self.socket.recvfrom(constants.RDT_OVER_UDP_ACK_PACKAGE_SIZE)
-
-                # If the packed data is not none
-                if packed is not None:
-                    result = unpack_ack_package(packed)
-
-                    # If the result unpacked data is not none, that means no unpacking
-                    # error occurred.
-                    if result is not None:
-                        # Fetch the sequential number from the result tuple
-                        # and send a ACK message
-                        seq, _ = result
-
-                        self.mark_package_data_acked_by_seq(seq)
-
-            # The code waited enough for receiving an ACK message, either the ACK messages take
-            # too long to come, or some SEND or ACK messages have been lost or corrupted.
-            except socket.timeout:
-                pass
-
-            # Calculate threshold_timestamp, the first time that the package_data's must resend.
-            threshold_timestamp = utils.get_timestamp() - constants.RETRANSMISSION_TIMEOUT
-
-            # Check every package_data in the sender window, if their timestamp_sent are below
-            # the threshold, resend them.
-            for package_data in self.window:
-                if package_data.state == STATE_SENT and package_data.timestamp_sent < threshold_timestamp:
-                    self.send_package_data(package_data)
-
-            # Remove the first packages from the window has already been ACK-ed,
-            # and refill the sender window.
-            while len(self.window) > 0:
-                if self.window[0].state == STATE_ACKED:
-                    self.window.popleft()
-                else:
-                    break
-
-            self.fill_window()
+    # Removes packets, which have been acknowledged, from the window.
+    def remove_acknowledged_packets(self):
+        while self.window and self.window[0].state == STATE_ACKED:
+            self.window.popleft()
