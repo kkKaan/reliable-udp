@@ -1,12 +1,59 @@
-import sys
-from src import *
+from include import *
 
-HOST = '0.0.0.0'
+HOST = ''
 TCP_PORT, UDP_PORT = 65432, 20001
+TARGET_HOST_IP = "172.17.0.3"
+UDP_TARGET_PORT, UDP_SENDER_PORT = 20001, 20001
+TCP_TARGET_PORT, TCP_SENDER_PORT = 65432, 65432
+
+def create_socket(host_ip, port_number):
+    connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    connection.bind((host_ip, port_number))
+    return connection
+
+def pack_package(chunk):
+    timestamp = get_timestamp()
+    chunk_length = len(chunk)
+    aligner_size = constants.TCP_MAX_CHUNK_SIZE - chunk_length
+    return struct.pack(f'!dI{chunk_length}s{aligner_size}s', timestamp, chunk_length, chunk, b' ' * aligner_size)
+
+def send_file(conn, filename):
+    """
+    Sends the specified file to the client.
+    """
+    with open(filename, 'rb') as file:
+        while True:
+            chunk = file.read(TCP_MAX_CHUNK_SIZE)
+            if not chunk:
+                break
+            packed = pack_package(chunk)
+            conn.sendall(packed)
+
+def handle_client_connection(conn):
+    """
+    Handles the client connection to receive a file request and send the file.
+    """
+    request = conn.recv(1024).decode()  # Assuming the request is a simple file name
+    print(f"Client requested file: {request}")
+    send_file(conn, request)
+    conn.close()
+
+# Splits a file into chunks, yields the chunks respectively.
+def chunk_file(filename, chunk_size):
+    """
+    :param filename: The path to the file to be chunked.
+    :param chunk_size: The size of each chunk.
+    """
+    with open(filename, 'rb') as file:
+        while True:
+            chunk = file.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 # Calculates the average transmission time for each package and the total transmission time,
 # returns a tuple containing the average time and total transmission time in milliseconds.
-def calculate_avg_and_total_time(timestamps):
+def calculate_time(timestamps):
     """
     :param timestamps: A list of timestamps representing sent and received times of packages.
     """
@@ -21,45 +68,43 @@ def calculate_avg_and_total_time(timestamps):
 
     return avg_time, total_time
 
-# Starts an RDTOverUDP file transmission server to receive a file.
-def receive_rdt_over_udp(host, udp_port, output_filename):
+# Sends the file data using the RDTOverUDP protocol.
+def send_udp(filename, sender_port, target_host, target_port):
     """
-    :param host: The host IP address.
-    :param udp_port: The UDP port number for the server.
-    :param output_filename: The filename to save the received data.
+    :param filename: Name of the file to be sent.
+    :param sender_port: Port number for the UDP client.
+    :param target_host: Target host address.
+    :param target_port: Target port number.
     """
-    timestamps = []
+    data = chunk_file(filename, UDP_MAX_CHUNK_SIZE)
+    server = RDTOverUDPServer(sender_port, target_host, target_port, data) 
 
-    with open(output_filename, 'wb') as result_file:
-        server = RDTOverUDPServer(host, udp_port)
-        for package in server.process():
-            timestamps.extend([package.timestamp_sent, package.timestamp_received])
-            result_file.write(package.chunk)
+    retransmission_count = server.process()
+    print('UDP Transmission Re-transferred Packets:', retransmission_count)
 
-    avg_time, total_time = calculate_avg_and_total_time(timestamps)
-    print('UDP Packets Average Transmission Time: {:.6f} ms'.format(avg_time))
-    print('UDP Communication Total Transmission Time: {:.6f} ms'.format(total_time))
+def listen_for_requests(udp_socket):
+    while True:
+        data, addr = udp_socket.recvfrom(1024)  # buffer size is 1024 bytes
+        if data.decode()[:7] == "REQUEST":
+            return addr, data.decode()[7:]
+        
 
-# Starts a TCP file transmission server to receive a file.
-def receive_tcp(host, tcp_port, output_filename):
-    """
-    :param host: The host IP address.
-    :param tcp_port: The TCP port number for the server.
-    :param output_filename: The filename to save the received data.
-    """
-    timestamps = []
+def main():
+    # server = create_socket(HOST, TCP_PORT)
+    # server.listen()
 
-    with open(output_filename, 'wb') as result_file:
-        server = TCPServer(host, tcp_port)
-        for timestamp_sent, timestamp_received, chunk in server.process():
-            timestamps.extend([timestamp_sent, timestamp_received])
-            result_file.write(chunk)
+    # while True:
+    #     conn, addr = server.accept()
+    #     print(f"Connected to {addr}, waiting for file request...")
+    #     handle_client_connection(conn)
 
-    avg_time, total_time = calculate_avg_and_total_time(timestamps)
-    print('TCP Packets Average Transmission Time: {:.6f} ms'.format(avg_time))
-    print('TCP Communication Total Transmission Time: {:.6f} ms'.format(total_time))
+    udp_socket = create_udp_socket(HOST, UDP_PORT)
+    print("Server is waiting for client requests...")
+    client_addr, name = listen_for_requests(udp_socket)
+    print(f"Received request from {client_addr}, sending files...")
+  
+    send_udp(name, UDP_SENDER_PORT, TARGET_HOST_IP, UDP_TARGET_PORT)
 
-if __name__ == '__main__':
-    receive_rdt_over_udp(HOST, UDP_PORT, 'transfer_file_UDP.txt')
-    # receive_tcp(HOST, TCP_PORT, 'transfer_file_TCP.txt')
-
+if __name__ == "__main__":
+    while True:
+        main()
