@@ -89,21 +89,21 @@ def listen_for_requests(udp_socket):
 def main():
 
     ### Running TCP Server ###
-    # server = create_socket(HOST, TCP_PORT)
-    # server.listen()
+    server = create_socket(HOST, TCP_PORT)
+    server.listen()
 
-    # while True:
-    #     conn, addr = server.accept()
-    #     # print(f"Connected to {addr}, waiting for file request...")
-    #     handle_client_connection(conn)
+    while True:
+        conn, addr = server.accept()
+        # print(f"Connected to {addr}, waiting for file request...")
+        handle_client_connection(conn)
 
     ### Running UDP Server ###
-    udp_socket = create_udp_socket(HOST, UDP_PORT)
-    # print("Server is waiting for client requests...")
-    client_addr, name = listen_for_requests(udp_socket)
-    # print(f"Received request from {client_addr}, sending files...")
+    # udp_socket = create_udp_socket(HOST, UDP_PORT)
+    # # print("Server is waiting for client requests...")
+    # client_addr, name = listen_for_requests(udp_socket)
+    # # print(f"Received request from {client_addr}, sending files...")
   
-    send_udp(name, UDP_SENDER_PORT, client_addr[0], UDP_TARGET_PORT)
+    # send_udp(name, UDP_SENDER_PORT, client_addr[0], UDP_TARGET_PORT)
 
 if __name__ == "__main__":
     while True:

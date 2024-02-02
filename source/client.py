@@ -108,37 +108,37 @@ def main(index):
 
     ### TCP ###
 
-    # start_time = get_timestamp()
+    start_time = get_timestamp()
 
-    # for i in range(10):
-    #     # print("Requesting " + str(i) + " file from server...")
-    #     request_file(TARGET_HOST_IP, TCP_TARGET_PORT, 'large-' + str(i) + '.obj')
-    #     request_file(TARGET_HOST_IP, TCP_TARGET_PORT, 'small-' + str(i) + '.obj')
-    #     # print("File " + str(i) + " received from server.")
+    for i in range(10):
+        # print("Requesting " + str(i) + " file from server...")
+        request_file(TARGET_HOST_IP, TCP_TARGET_PORT, 'large-' + str(i) + '.obj')
+        request_file(TARGET_HOST_IP, TCP_TARGET_PORT, 'small-' + str(i) + '.obj')
+        # print("File " + str(i) + " received from server.")
 
-    # end_time = get_timestamp()
-    # print("Total time: ", end_time - start_time)
+    end_time = get_timestamp()
+    print("Total time: ", end_time - start_time)
 
-    # with open('tcp_5cor.txt', 'a') as f:
-    #     f.write(str(1000 * (end_time - start_time)) + '\n') # in ms
+    with open('tcp_5cor.txt', 'a') as f:
+        f.write(str(1000 * (end_time - start_time)) + '\n') # in ms
 
     ### UDP ###
 
-    send_request_to_server(TARGET_HOST_IP, UDP_TARGET_PORT, 'large-'+str(index)+'.obj')
-    print("Request sent to server, waiting to receive file...")
-    receive_udp(HOST, UDP_PORT, 'udp_large-'+str(index)+'.obj')
+    # send_request_to_server(TARGET_HOST_IP, UDP_TARGET_PORT, 'large-'+str(index)+'.obj')
+    # print("Request sent to server, waiting to receive file...")
+    # receive_udp(HOST, UDP_PORT, 'udp_large-'+str(index)+'.obj')
 
-    send_request_to_server(TARGET_HOST_IP, UDP_TARGET_PORT, 'small-'+str(index)+'.obj')
-    print("Request sent to server, waiting to receive file...")
-    receive_udp(HOST, UDP_PORT, 'udp_small-'+str(index)+'.obj')
+    # send_request_to_server(TARGET_HOST_IP, UDP_TARGET_PORT, 'small-'+str(index)+'.obj')
+    # print("Request sent to server, waiting to receive file...")
+    # receive_udp(HOST, UDP_PORT, 'udp_small-'+str(index)+'.obj')
 
 
 if __name__ == "__main__":
     # TCP
-    # for i in range(30):
-    #     main(0)
+    for i in range(30):
+        main(0)
 
     # UDP, will be run by run.sh for 30 tests
-    for i in range(10):
-        main(i)
+    # for i in range(10):
+    #     main(i)
 
